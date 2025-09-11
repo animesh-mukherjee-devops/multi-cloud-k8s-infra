@@ -109,7 +109,7 @@ jobs:
           retention-days: 1
 
   terraform:
-    needs: bootstrap   # <-- ensures bootstrap finishes first
+    needs: bootstrap   # ensure bootstrap finishes first
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -134,7 +134,7 @@ jobs:
               repo: context.repo.repo,
               run_id: context.runId,
             });
-            console.log("Artifacts available in this run:");
+            console.log("Artifacts in this run:");
             for (const a of artifacts.data.artifacts) {
               console.log(`- ${a.name} (expired: ${a.expired})`);
             }
@@ -157,7 +157,7 @@ jobs:
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: echo "DIGITALOCEAN_TOKEN=${{ secrets.DIGITALOCEAN_TOKEN }}" >> $GITHUB_ENV
 
-      - name: Terraform Init (DO Cluster, resilient find)
+      - name: Terraform Init (DO Cluster, use endpoint)
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: |
           BUCKET=$(find ./bootstrap-outputs -type f -name "do-bucket.txt" -exec cat {} \; || echo "MISSING")
@@ -170,7 +170,7 @@ jobs:
             -backend-config="bucket=$BUCKET" \
             -backend-config="key=doks/terraform.tfstate" \
             -backend-config="region=us-east-1" \
-            -backend-config="endpoints.s3=https://$REGION.digitaloceanspaces.com" \
+            -backend-config="endpoint=https://$REGION.digitaloceanspaces.com" \
             -backend-config="skip_credentials_validation=true" \
             -backend-config="skip_metadata_api_check=true" \
             -backend-config="skip_region_validation=true"
@@ -197,7 +197,7 @@ jobs:
           echo "ARM_SUBSCRIPTION_ID=${{ secrets.ARM_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
           echo "ARM_TENANT_ID=${{ secrets.ARM_TENANT_ID }}" >> $GITHUB_ENV
 
-      - name: Terraform Init (Azure Cluster, resilient find)
+      - name: Terraform Init (Azure Cluster)
         if: ${{ github.event.inputs.cloud == 'azure' }}
         run: |
           RG=$(find ./bootstrap-outputs -type f -name "azure-rg.txt" -exec cat {} \; || echo "MISSING")

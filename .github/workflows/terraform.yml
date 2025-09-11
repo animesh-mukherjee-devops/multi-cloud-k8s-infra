@@ -136,11 +136,11 @@ jobs:
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: echo "DIGITALOCEAN_TOKEN=${{ secrets.DIGITALOCEAN_TOKEN }}" >> $GITHUB_ENV
 
-      - name: Terraform Init (DO Cluster, resilient path)
+      - name: Terraform Init (DO Cluster, flat path)
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: |
-          BUCKET=$(cat ./bootstrap-outputs/do-bucket.txt 2>/dev/null || cat ./bootstrap-outputs/do-bootstrap-outputs/do-bucket.txt)
-          REGION=$(cat ./bootstrap-outputs/do-region.txt 2>/dev/null || cat ./bootstrap-outputs/do-bootstrap-outputs/do-region.txt)
+          BUCKET=$(cat ./bootstrap-outputs/do-bucket.txt)
+          REGION=$(cat ./bootstrap-outputs/do-region.txt)
 
           echo "Bucket: $BUCKET"
           echo "Region: $REGION"
@@ -188,13 +188,13 @@ jobs:
           echo "ARM_SUBSCRIPTION_ID=${{ secrets.ARM_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
           echo "ARM_TENANT_ID=${{ secrets.ARM_TENANT_ID }}" >> $GITHUB_ENV
 
-      - name: Terraform Init (Azure Cluster)
+      - name: Terraform Init (Azure Cluster, flat path)
         if: ${{ github.event.inputs.cloud == 'azure' }}
         run: |
           terraform init -input=false \
-            -backend-config="resource_group_name=$(cat ./bootstrap-outputs/azure-rg.txt 2>/dev/null || cat ./bootstrap-outputs/azure-bootstrap-outputs/azure-rg.txt)" \
-            -backend-config="storage_account_name=$(cat ./bootstrap-outputs/azure-sa.txt 2>/dev/null || cat ./bootstrap-outputs/azure-bootstrap-outputs/azure-sa.txt)" \
-            -backend-config="container_name=$(cat ./bootstrap-outputs/azure-container.txt 2>/dev/null || cat ./bootstrap-outputs/azure-bootstrap-outputs/azure-container.txt)" \
+            -backend-config="resource_group_name=$(cat ./bootstrap-outputs/azure-rg.txt)" \
+            -backend-config="storage_account_name=$(cat ./bootstrap-outputs/azure-sa.txt)" \
+            -backend-config="container_name=$(cat ./bootstrap-outputs/azure-container.txt)" \
             -backend-config="key=aks/terraform.tfstate"
 
       # -------------------------

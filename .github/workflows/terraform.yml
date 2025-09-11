@@ -58,8 +58,8 @@ jobs:
       - name: Save DO Bootstrap Outputs
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: |
-          terraform output -raw bucket_name > ../do-bucket.txt
-          terraform output -raw region > ../do-region.txt
+          terraform output -raw bucket_name > $GITHUB_WORKSPACE/do-bucket.txt
+          terraform output -raw region > $GITHUB_WORKSPACE/do-region.txt
 
       - name: Upload DO Bootstrap Outputs
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
@@ -93,9 +93,9 @@ jobs:
       - name: Save Azure Bootstrap Outputs
         if: ${{ github.event.inputs.cloud == 'azure' }}
         run: |
-          terraform output -raw resource_group_name > ../azure-rg.txt
-          terraform output -raw storage_account_name > ../azure-sa.txt
-          terraform output -raw container_name > ../azure-container.txt
+          terraform output -raw resource_group_name > $GITHUB_WORKSPACE/azure-rg.txt
+          terraform output -raw storage_account_name > $GITHUB_WORKSPACE/azure-sa.txt
+          terraform output -raw container_name > $GITHUB_WORKSPACE/azure-container.txt
 
       - name: Upload Azure Bootstrap Outputs
         if: ${{ github.event.inputs.cloud == 'azure' }}

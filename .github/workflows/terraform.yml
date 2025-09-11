@@ -132,15 +132,19 @@ jobs:
           name: do-bootstrap-outputs
           path: ./bootstrap-outputs
 
+      - name: Debug DO Bootstrap Outputs
+        if: ${{ github.event.inputs.cloud == 'digitalocean' }}
+        run: ls -R ./bootstrap-outputs
+
       - name: DO ENV
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: echo "DIGITALOCEAN_TOKEN=${{ secrets.DIGITALOCEAN_TOKEN }}" >> $GITHUB_ENV
 
-      - name: Terraform Init (DO Cluster, flat path)
+      - name: Terraform Init (DO Cluster, resilient find)
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: |
-          BUCKET=$(cat ./bootstrap-outputs/do-bucket.txt)
-          REGION=$(cat ./bootstrap-outputs/do-region.txt)
+          BUCKET=$(find ./bootstrap-outputs -type f -name "do-bucket.txt" -exec cat {} \;)
+          REGION=$(find ./bootstrap-outputs -type f -name "do-region.txt" -exec cat {} \;)
 
           echo "Bucket: $BUCKET"
           echo "Region: $REGION"
@@ -180,6 +184,10 @@ jobs:
           name: azure-bootstrap-outputs
           path: ./bootstrap-outputs
 
+      - name: Debug Azure Bootstrap Outputs
+        if: ${{ github.event.inputs.cloud == 'azure' }}
+        run: ls -R ./bootstrap-outputs
+
       - name: Azure ENV
         if: ${{ github.event.inputs.cloud == 'azure' }}
         run: |
@@ -188,13 +196,21 @@ jobs:
           echo "ARM_SUBSCRIPTION_ID=${{ secrets.ARM_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
           echo "ARM_TENANT_ID=${{ secrets.ARM_TENANT_ID }}" >> $GITHUB_ENV
 
-      - name: Terraform Init (Azure Cluster, flat path)
+      - name: Terraform Init (Azure Cluster, resilient find)
         if: ${{ github.event.inputs.cloud == 'azure' }}
         run: |
+          RG=$(find ./bootstrap-outputs -type f -name "azure-rg.txt" -exec cat {} \;)
+          SA=$(find ./bootstrap-outputs -type f -name "azure-sa.txt" -exec cat {} \;)
+          CONTAINER=$(find ./bootstrap-outputs -type f -name "azure-container.txt" -exec cat {} \;)
+
+          echo "Resource Group: $RG"
+          echo "Storage Account: $SA"
+          echo "Container: $CONTAINER"
+
           terraform init -input=false \
-            -backend-config="resource_group_name=$(cat ./bootstrap-outputs/azure-rg.txt)" \
-            -backend-config="storage_account_name=$(cat ./bootstrap-outputs/azure-sa.txt)" \
-            -backend-config="container_name=$(cat ./bootstrap-outputs/azure-container.txt)" \
+            -backend-config="resource_group_name=$RG" \
+            -backend-config="storage_account_name=$SA" \
+            -backend-config="container_name=$CONTAINER" \
             -backend-config="key=aks/terraform.tfstate"
 
       # -------------------------

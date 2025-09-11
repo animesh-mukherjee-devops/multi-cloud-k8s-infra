@@ -34,10 +34,3 @@ resource "local_file" "kubeconfig" {
   filename        = "${path.module}/kubeconfig"
   file_permission = "0600"
 }
-
-output "kubeconfig_path" {
-  value = local_file.kubeconfig.filename
-}
-output "cluster_name" {
-  value = digitalocean_kubernetes_cluster.k8s.name
-}

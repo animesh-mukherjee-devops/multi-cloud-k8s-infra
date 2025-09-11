@@ -15,11 +15,3 @@ resource "digitalocean_spaces_bucket" "tfstate" {
   name   = var.spaces_bucket_name
   region = var.region
 }
-
-output "bucket_name" {
-  value = digitalocean_spaces_bucket.tfstate.name
-}
-
-output "region" {
-  value = var.region
-}

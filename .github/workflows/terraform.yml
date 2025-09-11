@@ -22,11 +22,11 @@ on:
           - destroy
 
 jobs:
-  terraform:
+  bootstrap:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./modules/${{ github.event.inputs.cloud }}
+        working-directory: ./terraform/bootstrap-${{ github.event.inputs.cloud }}
 
     steps:
       - name: Checkout repo
@@ -37,12 +37,11 @@ jobs:
         with:
           terraform_version: 1.6.6
 
-      # --- Configure environment per cloud ---
-      - name: Set DigitalOcean Env
+      - name: DigitalOcean ENV
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: echo "DIGITALOCEAN_TOKEN=${{ secrets.DIGITALOCEAN_TOKEN }}" >> $GITHUB_ENV
 
-      - name: Set Azure Env
+      - name: Azure ENV
         if: ${{ github.event.inputs.cloud == 'azure' }}
         run: |
           echo "ARM_CLIENT_ID=${{ secrets.ARM_CLIENT_ID }}" >> $GITHUB_ENV
@@ -50,7 +49,40 @@ jobs:
           echo "ARM_SUBSCRIPTION_ID=${{ secrets.ARM_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
           echo "ARM_TENANT_ID=${{ secrets.ARM_TENANT_ID }}" >> $GITHUB_ENV
 
-      # --- Terraform workflow ---
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Apply Bootstrap
+        run: terraform apply -auto-approve -input=false
+
+  terraform:
+    needs: bootstrap
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./terraform/${{ github.event.inputs.cloud }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: DigitalOcean ENV
+        if: ${{ github.event.inputs.cloud == 'digitalocean' }}
+        run: echo "DIGITALOCEAN_TOKEN=${{ secrets.DIGITALOCEAN_TOKEN }}" >> $GITHUB_ENV
+
+      - name: Azure ENV
+        if: ${{ github.event.inputs.cloud == 'azure' }}
+        run: |
+          echo "ARM_CLIENT_ID=${{ secrets.ARM_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=${{ secrets.ARM_CLIENT_SECRET }}" >> $GITHUB_ENV
+          echo "ARM_SUBSCRIPTION_ID=${{ secrets.ARM_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=${{ secrets.ARM_TENANT_ID }}" >> $GITHUB_ENV
+
       - name: Terraform Init
         run: terraform init -input=false
 

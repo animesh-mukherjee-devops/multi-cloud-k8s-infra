@@ -29,11 +29,9 @@ jobs:
         working-directory: ./terraform/bootstrap-${{ github.event.inputs.cloud }}
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
@@ -60,8 +58,17 @@ jobs:
       - name: Save DO Bootstrap Outputs
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: |
-          terraform output -raw bucket_name > ../../do-bucket.txt
-          terraform output -raw region > ../../do-region.txt
+          terraform output -raw bucket_name > do-bucket.txt
+          terraform output -raw region > do-region.txt
+
+      - name: Upload DO Bootstrap Outputs
+        if: ${{ github.event.inputs.cloud == 'digitalocean' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: do-bootstrap-outputs
+          path: |
+            do-bucket.txt
+            do-region.txt
 
       # -------------------------
       # Azure bootstrap
@@ -85,9 +92,19 @@ jobs:
       - name: Save Azure Bootstrap Outputs
         if: ${{ github.event.inputs.cloud == 'azure' }}
         run: |
-          terraform output -raw resource_group_name > ../../azure-rg.txt
-          terraform output -raw storage_account_name > ../../azure-sa.txt
-          terraform output -raw container_name > ../../azure-container.txt
+          terraform output -raw resource_group_name > azure-rg.txt
+          terraform output -raw storage_account_name > azure-sa.txt
+          terraform output -raw container_name > azure-container.txt
+
+      - name: Upload Azure Bootstrap Outputs
+        if: ${{ github.event.inputs.cloud == 'azure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-bootstrap-outputs
+          path: |
+            azure-rg.txt
+            azure-sa.txt
+            azure-container.txt
 
   terraform:
     needs: bootstrap
@@ -97,17 +114,22 @@ jobs:
         working-directory: ./terraform/${{ github.event.inputs.cloud }}
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
       # -------------------------
-      # DigitalOcean
+      # DigitalOcean cluster
       # -------------------------
+      - name: Download DO Bootstrap Outputs
+        if: ${{ github.event.inputs.cloud == 'digitalocean' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: do-bootstrap-outputs
+          path: ./bootstrap-outputs
+
       - name: DO ENV
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: echo "DIGITALOCEAN_TOKEN=${{ secrets.DIGITALOCEAN_TOKEN }}" >> $GITHUB_ENV
@@ -116,18 +138,24 @@ jobs:
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: |
           terraform init -input=false \
-            -backend-config="bucket=$(cat ../do-bucket.txt)" \
+            -backend-config="bucket=$(cat ./bootstrap-outputs/do-bucket.txt)" \
             -backend-config="key=doks/terraform.tfstate" \
             -backend-config="region=us-east-1" \
-            -backend-config="endpoint=https://$(cat ../do-region.txt).digitaloceanspaces.com" \
+            -backend-config="endpoints.s3=https://$(cat ./bootstrap-outputs/do-region.txt).digitaloceanspaces.com" \
             -backend-config="skip_credentials_validation=true" \
             -backend-config="skip_metadata_api_check=true" \
             -backend-config="skip_region_validation=true"
 
+      # -------------------------
+      # Azure cluster
+      # -------------------------
+      - name: Download Azure Bootstrap Outputs
+        if: ${{ github.event.inputs.cloud == 'azure' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: azure-bootstrap-outputs
+          path: ./bootstrap-outputs
 
-      # -------------------------
-      # Azure
-      # -------------------------
       - name: Azure ENV
         if: ${{ github.event.inputs.cloud == 'azure' }}
         run: |
@@ -140,9 +168,9 @@ jobs:
         if: ${{ github.event.inputs.cloud == 'azure' }}
         run: |
           terraform init -input=false \
-            -backend-config="resource_group_name=$(cat ../azure-rg.txt)" \
-            -backend-config="storage_account_name=$(cat ../azure-sa.txt)" \
-            -backend-config="container_name=$(cat ../azure-container.txt)" \
+            -backend-config="resource_group_name=$(cat ./bootstrap-outputs/azure-rg.txt)" \
+            -backend-config="storage_account_name=$(cat ./bootstrap-outputs/azure-sa.txt)" \
+            -backend-config="container_name=$(cat ./bootstrap-outputs/azure-container.txt)" \
             -backend-config="key=aks/terraform.tfstate"
 
       # -------------------------

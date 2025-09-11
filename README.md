@@ -1,25 +1,20 @@
 # multi-cloud-k8s-infra
 
 Provision Kubernetes clusters in **DigitalOcean (DOKS)** or **Azure (AKS)** using Terraform.  
-This repo is intentionally modular — each cloud module uses its **native backend** for Terraform state.
-
-It now includes:
-1. **Bootstrap modules** (DigitalOcean Spaces, Azure Blob).  
-2. **GitHub Actions workflow** that:
-   - Runs bootstrap automatically.
-   - Provisions Kubernetes clusters.
-   - Uploads kubeconfig as an artifact for Jenkins/apps.
+This repo is modular — each cloud has its own bootstrap and cluster modules.  
+Terraform state is stored in **DigitalOcean Spaces** (S3-compatible) or **Azure Blob**.  
+Outputs are passed between jobs using **artifacts** (GitHub Actions best practice).
 
 ---
 
 # Table of contents
 1. Prerequisites  
 2. Repo structure  
-3. Required backend bootstrap  
-4. How to run locally  
-5. How to pass variables  
-6. GitHub Actions workflow (with artifact upload)  
-7. Module variables  
+3. Required secrets  
+4. How it works (artifact flow)  
+5. Local usage  
+6. Workflow usage  
+7. Variables  
 8. Outputs  
 9. Consuming kubeconfig  
 10. Best practices  
@@ -30,21 +25,10 @@ It now includes:
 
 # 1. Prerequisites
 
-### Local
 - Terraform >= 1.6  
 - `kubectl`  
-- CLIs: `doctl` (DigitalOcean), `az` (Azure)  
-
-### GitHub Actions Secrets
-
-#### DigitalOcean
-- `DIGITALOCEAN_TOKEN` (API token)  
-
-#### Azure
-- `ARM_CLIENT_ID`  
-- `ARM_CLIENT_SECRET`  
-- `ARM_SUBSCRIPTION_ID`  
-- `ARM_TENANT_ID`  
+- Cloud CLIs (`doctl`, `az`) — optional but useful for testing  
+- GitHub Actions enabled on repo  
 
 ---
 
@@ -53,7 +37,6 @@ It now includes:
 ```
 multi-cloud-k8s-infra/
 ├─ README.md
-├─ deploy.sh
 ├─ terraform/
 │  ├─ bootstrap-digitalocean/   # Spaces bucket
 │  ├─ bootstrap-azure/          # RG + Storage + Container
@@ -66,27 +49,58 @@ multi-cloud-k8s-infra/
 
 ---
 
-# 3. Backend bootstrap
+# 3. Required secrets
 
-Terraform backends must exist before use.  
-This repo includes bootstrap modules to handle that:
+Add these under **GitHub → Repo → Settings → Secrets and variables → Actions**.
 
-- **DigitalOcean** → `terraform/bootstrap-digitalocean`
-- **Azure** → `terraform/bootstrap-azure`
+### DigitalOcean
+- `DIGITALOCEAN_TOKEN` → API token (used for Kubernetes cluster creation)  
+- `DO_SPACES_KEY` → Spaces Access Key  
+- `DO_SPACES_SECRET` → Spaces Secret Key  
 
-Run bootstrap once per environment.
+### Azure
+- `ARM_CLIENT_ID`  
+- `ARM_CLIENT_SECRET`  
+- `ARM_SUBSCRIPTION_ID`  
+- `ARM_TENANT_ID`  
 
 ---
 
-# 4. How to run locally
+# 4. How it works (artifact flow)
+
+1. **Bootstrap job**  
+   - Creates backend storage (Spaces bucket or Azure Blob container).  
+   - Saves outputs into files (e.g., `do-bucket.txt`, `do-region.txt`).  
+   - Uploads them as artifacts (`do-bootstrap-outputs`, `azure-bootstrap-outputs`).  
+
+2. **Cluster job**  
+   - Downloads artifacts from bootstrap.  
+   - Uses them in `terraform init -backend-config`.  
+   - Provisions the Kubernetes cluster.  
+   - Saves kubeconfig.  
+
+3. **Artifact upload**  
+   - After cluster creation, kubeconfig is uploaded as a GitHub artifact.  
+   - Jenkins repo (or others) can download and use it.  
+
+---
+
+# 5. Local usage
 
 ## DigitalOcean
 ```bash
-export DIGITALOCEAN_TOKEN="your_token"
+export TF_VAR_digitalocean_token="your_DO_api_token"
+export TF_VAR_spaces_access_key="your_spaces_access_key"
+export TF_VAR_spaces_secret_key="your_spaces_secret_key"
+export TF_VAR_spaces_bucket_name="do-tfstate-local"
+export TF_VAR_region="nyc3"
+
 cd terraform/bootstrap-digitalocean
 terraform init && terraform apply -auto-approve
+
 cd ../digitalocean
-terraform init -backend-config="bucket=mybucket"   -backend-config="region=nyc3"   -backend-config="key=doks/terraform.tfstate"   -backend-config="endpoints.s3=https://nyc3.digitaloceanspaces.com"   -backend-config="skip_credentials_validation=true"   -backend-config="skip_metadata_api_check=true"   -backend-config="skip_region_validation=true"
+terraform init   -backend-config="bucket=do-tfstate-local"   -backend-config="key=doks/terraform.tfstate"   -backend-config="region=us-east-1"   -backend-config="endpoints.s3=https://nyc3.digitaloceanspaces.com"   -backend-config="skip_credentials_validation=true"   -backend-config="skip_metadata_api_check=true"   -backend-config="skip_region_validation=true"
+
 terraform apply -auto-approve
 ```
 
@@ -96,94 +110,95 @@ export ARM_CLIENT_ID="..."
 export ARM_CLIENT_SECRET="..."
 export ARM_SUBSCRIPTION_ID="..."
 export ARM_TENANT_ID="..."
+
 cd terraform/bootstrap-azure
 terraform init && terraform apply -auto-approve
+
 cd ../azure
-terraform init -backend-config="resource_group_name=tfstate-rg"   -backend-config="storage_account_name=tfstateaccount123"   -backend-config="container_name=tfstate"   -backend-config="key=aks/terraform.tfstate"
+terraform init   -backend-config="resource_group_name=tfstate-rg"   -backend-config="storage_account_name=tfstateaccount123"   -backend-config="container_name=tfstate"   -backend-config="key=aks/terraform.tfstate"
+
 terraform apply -auto-approve
 ```
 
 ---
 
-# 5. Passing variables
+# 6. Workflow usage (with artifacts)
 
-- CLI: `terraform apply -var="cluster_name=test"`  
-- `.tfvars` file: `terraform apply -var-file=terraform.tfvars`  
-- Env vars: `export TF_VAR_cluster_name=test`  
-- Providers:  
-  - DigitalOcean → `DIGITALOCEAN_TOKEN`  
-  - Azure → `ARM_CLIENT_ID`, etc.  
+The GitHub Actions workflow (`.github/workflows/terraform.yml`) has two jobs:
+
+- **`bootstrap`**:  
+  - Creates backend storage.  
+  - Saves outputs to files.  
+  - Uploads outputs as artifacts (`do-bootstrap-outputs`, `azure-bootstrap-outputs`).  
+
+- **`terraform`**:  
+  - Downloads artifacts.  
+  - Runs `terraform init` with backend configs.  
+  - Provisions the Kubernetes cluster.  
+  - Uploads kubeconfig as artifact.  
+
+### Example Flow (DigitalOcean)
+
+1. Bootstrap job saves outputs:
+   ```
+   do-bucket.txt  → bucket name
+   do-region.txt  → region
+   ```
+
+   Uploaded as artifact: `do-bootstrap-outputs`.
+
+2. Cluster job downloads the artifact, then runs:
+
+   ```bash
+   terraform init -input=false      -backend-config="bucket=$(cat ./bootstrap-outputs/do-bucket.txt)"      -backend-config="key=doks/terraform.tfstate"      -backend-config="region=us-east-1"      -backend-config="endpoints.s3=https://$(cat ./bootstrap-outputs/do-region.txt).digitaloceanspaces.com"      -backend-config="skip_credentials_validation=true"      -backend-config="skip_metadata_api_check=true"      -backend-config="skip_region_validation=true"
+   ```
+
+3. After cluster creation, kubeconfig is uploaded as artifact:  
+   - `kubeconfig-digitalocean`  
+   - `kubeconfig-azure`  
 
 ---
 
-# 6. GitHub Actions workflow
+# 7. Variables
 
-Location: `.github/workflows/terraform.yml`  
+## DigitalOcean
+- `digitalocean_token` → API token  
+- `spaces_access_key` / `spaces_secret_key` → Spaces credentials  
+- `spaces_bucket_name` → bucket name  
+- `region` → DO region (default: `nyc3`)  
+- `cluster_name` → cluster name  
+- `node_size` → droplet size  
+- `node_count` → number of nodes  
 
-## Trigger
-- Run manually via **Actions → Run workflow**  
-- Choose:  
-  - `cloud`: `digitalocean` or `azure`  
-  - `action`: `plan`, `apply`, or `destroy`  
-
-## Flow
-1. **Bootstrap job**  
-   - Creates backend (Spaces or Azure Blob).  
-   - Saves outputs to files.  
-
-2. **Terraform job**  
-   - Uses outputs in `terraform init -backend-config`.  
-   - Runs `plan`, `apply`, `destroy`.  
-   - After `apply`, uploads kubeconfig as an artifact.  
-
-## Artifact
-- After apply, kubeconfig is uploaded as:  
-  - `kubeconfig-digitalocean`  
-  - `kubeconfig-azure`  
-
----
-
-# 7. Module variables
-
-## DigitalOcean (`terraform/digitalocean/variables.tf`)
-
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `digitalocean_token` | string | none | API token |
-| `region` | string | "nyc3" | Region |
-| `cluster_name` | string | "do-terraform-cluster" | Cluster name |
-| `node_size` | string | "s-2vcpu-4gb" | Droplet size |
-| `node_count` | number | 2 | Number of nodes |
-
-## Azure (`terraform/azure/variables.tf`)
-
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `resource_group_name` | string | "aks-rg" | Resource group |
-| `cluster_name` | string | "aks-cluster" | Cluster name |
-| `location` | string | "East US" | Region |
-| `node_count` | number | 2 | Nodes |
-| `node_size` | string | "Standard_DS2_v2" | VM size |
+## Azure
+- `resource_group_name` → resource group  
+- `storage_account_name` → storage account  
+- `container_name` → blob container  
+- `cluster_name` → cluster name  
+- `location` → region  
+- `node_count` → node count  
+- `node_size` → VM size  
 
 ---
 
 # 8. Outputs
 
-- **DigitalOcean**: `terraform/digitalocean/kubeconfig`  
-- **Azure**: `terraform/azure/kubeconfig`  
-- GitHub Actions artifact: `kubeconfig-<cloud>`  
+- `bucket_name` (bootstrap)  
+- `region` (bootstrap)  
+- `kubeconfig_path` (cluster)  
+- GitHub artifact: `kubeconfig-digitalocean` or `kubeconfig-azure`  
 
 ---
 
 # 9. Consuming kubeconfig
 
-From Jenkins repo workflow:
+From another repo/workflow (e.g., Jenkins deployment):
 
 ```yaml
 - name: Download kubeconfig
   uses: actions/download-artifact@v4
   with:
-    name: kubeconfig-digitalocean   # or kubeconfig-azure
+    name: kubeconfig-digitalocean
     path: ./kubeconfig
 
 - name: Use kubeconfig
@@ -191,32 +206,33 @@ From Jenkins repo workflow:
     export KUBECONFIG=./kubeconfig/kubeconfig
     kubectl get nodes
 ```
+
 ---
 
 # 10. Best practices
 
-- Separate **bootstrap** and **cluster** clearly.  
-- Don’t hardcode backend → pass via workflow.  
-- Store kubeconfig as **artifact only**, never in Git.  
-- Protect `apply`/`destroy` with **GitHub Environments approvals**.  
-- Rotate cloud secrets.  
+- Use **artifacts** instead of relative paths to pass outputs.  
+- Never hardcode secrets → always use GitHub secrets.  
+- Always set `region=us-east-1` for S3 backend.  
+- Restrict API token scope to minimum required.  
+- Protect `apply`/`destroy` with environment approvals in GitHub.  
 
 ---
 
 # 11. Troubleshooting
 
-- **NoSuchBucket** (DO): Run bootstrap first.  
-- **Auth error** (Azure): Check `ARM_*` env vars.  
-- **Provider mismatch**: Pin provider versions.  
-- **kubeconfig missing**: Ensure `apply` ran, not just `plan`.  
+- **Spaces credentials not configured** → ensure `DO_SPACES_KEY` and `DO_SPACES_SECRET` are set.  
+- **Invalid AWS Region** → backend config must always use `region=us-east-1`.  
+- **Missing outputs** → bootstrap job must run successfully before cluster job.  
+- **ACL deprecation warnings** → fixed using `aws_s3_bucket_acl`.  
 
 ---
 
 # 12. Next steps
 
-- Add AWS (EKS) & GCP (GKE).  
-- Jenkins repo workflow: download kubeconfig, deploy Jenkins Helm.  
-- ArgoCD GitOps for apps.  
-- Use Terraform Cloud for state + locking.  
+- Add AWS (EKS) and GCP (GKE).  
+- Jenkins repo workflow to auto-deploy Jenkins Helm after kubeconfig artifact download.  
+- ArgoCD for GitOps-style application delivery.  
+- Terraform Cloud for remote state + locking.  
 
 ---

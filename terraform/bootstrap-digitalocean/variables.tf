@@ -3,9 +3,20 @@ variable "digitalocean_token" {
   type        = string
 }
 
+variable "spaces_access_key" {
+  description = "Spaces access key"
+  type        = string
+}
+
+variable "spaces_secret_key" {
+  description = "Spaces secret key"
+  type        = string
+}
+
 variable "region" {
-  type    = string
-  default = "nyc3"
+  description = "Region for Spaces bucket"
+  type        = string
+  default     = "nyc3"
 }
 
 variable "spaces_bucket_name" {

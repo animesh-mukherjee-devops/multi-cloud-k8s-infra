@@ -1,6 +1,7 @@
 output "bucket_name" {
-  value = digitalocean_spaces_bucket.tfstate.name
+  value = aws_s3_bucket.tfstate.bucket
 }
+
 output "region" {
   value = var.region
 }

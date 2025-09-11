@@ -44,9 +44,10 @@ jobs:
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: |
           echo "TF_VAR_digitalocean_token=${{ secrets.DIGITALOCEAN_TOKEN }}" >> $GITHUB_ENV
+          echo "TF_VAR_spaces_access_key=${{ secrets.DO_SPACES_KEY }}" >> $GITHUB_ENV
+          echo "TF_VAR_spaces_secret_key=${{ secrets.DO_SPACES_SECRET }}" >> $GITHUB_ENV
           echo "TF_VAR_spaces_bucket_name=do-tfstate-${{ github.run_id }}" >> $GITHUB_ENV
           echo "TF_VAR_region=nyc3" >> $GITHUB_ENV
-
 
       - name: Terraform Init (DO Bootstrap)
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}

@@ -118,11 +118,12 @@ jobs:
           terraform init -input=false \
             -backend-config="bucket=$(cat ../do-bucket.txt)" \
             -backend-config="key=doks/terraform.tfstate" \
-            -backend-config="region=$(cat ../do-region.txt)" \
-            -backend-config="endpoints.s3=https://$(cat ../do-region.txt).digitaloceanspaces.com" \
+            -backend-config="region=us-east-1" \
+            -backend-config="endpoint=https://$(cat ../do-region.txt).digitaloceanspaces.com" \
             -backend-config="skip_credentials_validation=true" \
             -backend-config="skip_metadata_api_check=true" \
             -backend-config="skip_region_validation=true"
+
 
       # -------------------------
       # Azure

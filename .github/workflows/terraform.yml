@@ -136,29 +136,35 @@ jobs:
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: echo "DIGITALOCEAN_TOKEN=${{ secrets.DIGITALOCEAN_TOKEN }}" >> $GITHUB_ENV
 
-      - name: Terraform Init (DO Cluster, auto-detect endpoint)
+      - name: Terraform Init (DO Cluster, resilient path)
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: |
+          BUCKET=$(cat ./bootstrap-outputs/do-bucket.txt 2>/dev/null || cat ./bootstrap-outputs/do-bootstrap-outputs/do-bucket.txt)
+          REGION=$(cat ./bootstrap-outputs/do-region.txt 2>/dev/null || cat ./bootstrap-outputs/do-bootstrap-outputs/do-region.txt)
+
+          echo "Bucket: $BUCKET"
+          echo "Region: $REGION"
+
           PROVIDER_VERSION=$(terraform providers mirror . | grep "registry.terraform.io/hashicorp/aws" | awk '{print $2}' || echo "0.0.0")
           echo "Detected AWS provider version: $PROVIDER_VERSION"
 
           if [ "$(printf '%s\n' "4.33.0" "$PROVIDER_VERSION" | sort -V | head -n1)" = "4.33.0" ]; then
             echo "Using endpoints.s3"
             terraform init -input=false \
-              -backend-config="bucket=$(cat ./bootstrap-outputs/do-bucket.txt)" \
+              -backend-config="bucket=$BUCKET" \
               -backend-config="key=doks/terraform.tfstate" \
               -backend-config="region=us-east-1" \
-              -backend-config="endpoints.s3=https://$(cat ./bootstrap-outputs/do-region.txt).digitaloceanspaces.com" \
+              -backend-config="endpoints.s3=https://$REGION.digitaloceanspaces.com" \
               -backend-config="skip_credentials_validation=true" \
               -backend-config="skip_metadata_api_check=true" \
               -backend-config="skip_region_validation=true"
           else
             echo "Using endpoint"
             terraform init -input=false \
-              -backend-config="bucket=$(cat ./bootstrap-outputs/do-bucket.txt)" \
+              -backend-config="bucket=$BUCKET" \
               -backend-config="key=doks/terraform.tfstate" \
               -backend-config="region=us-east-1" \
-              -backend-config="endpoint=https://$(cat ./bootstrap-outputs/do-region.txt).digitaloceanspaces.com" \
+              -backend-config="endpoint=https://$REGION.digitaloceanspaces.com" \
               -backend-config="skip_credentials_validation=true" \
               -backend-config="skip_metadata_api_check=true" \
               -backend-config="skip_region_validation=true"
@@ -186,9 +192,9 @@ jobs:
         if: ${{ github.event.inputs.cloud == 'azure' }}
         run: |
           terraform init -input=false \
-            -backend-config="resource_group_name=$(cat ./bootstrap-outputs/azure-rg.txt)" \
-            -backend-config="storage_account_name=$(cat ./bootstrap-outputs/azure-sa.txt)" \
-            -backend-config="container_name=$(cat ./bootstrap-outputs/azure-container.txt)" \
+            -backend-config="resource_group_name=$(cat ./bootstrap-outputs/azure-rg.txt 2>/dev/null || cat ./bootstrap-outputs/azure-bootstrap-outputs/azure-rg.txt)" \
+            -backend-config="storage_account_name=$(cat ./bootstrap-outputs/azure-sa.txt 2>/dev/null || cat ./bootstrap-outputs/azure-bootstrap-outputs/azure-sa.txt)" \
+            -backend-config="container_name=$(cat ./bootstrap-outputs/azure-container.txt 2>/dev/null || cat ./bootstrap-outputs/azure-bootstrap-outputs/azure-container.txt)" \
             -backend-config="key=aks/terraform.tfstate"
 
       # -------------------------

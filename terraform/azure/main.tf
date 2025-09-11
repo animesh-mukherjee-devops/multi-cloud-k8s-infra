@@ -1,32 +1,8 @@
-terraform {
-  required_providers {
-    azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "~> 3.0"
-    }
-    local = {
-      source  = "hashicorp/local"
-      version = "~> 2.0"
-    }
-  }
-}
-
-provider "azurerm" {
-  features {}
-}
-
-provider "local" {}
-
-resource "azurerm_resource_group" "rg" {
-  name     = var.resource_group_name
-  location = var.location
-}
-
-resource "azurerm_kubernetes_cluster" "aks" {
+resource "azurerm_kubernetes_cluster" "k8s" {
   name                = var.cluster_name
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
-  dns_prefix          = "aksdns"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  dns_prefix          = "${var.cluster_name}-dns"
 
   default_node_pool {
     name       = "default"
@@ -39,15 +15,6 @@ resource "azurerm_kubernetes_cluster" "aks" {
   }
 }
 
-resource "local_file" "kubeconfig" {
-  content         = azurerm_kubernetes_cluster.aks.kube_config_raw
-  filename        = "${path.module}/kubeconfig"
-  file_permission = "0600"
-}
-
-output "kubeconfig_path" {
-  value = local_file.kubeconfig.filename
-}
 output "cluster_name" {
-  value = azurerm_kubernetes_cluster.aks.name
+  value = azurerm_kubernetes_cluster.k8s.name
 }

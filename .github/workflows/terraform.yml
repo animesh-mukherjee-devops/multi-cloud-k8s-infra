@@ -136,17 +136,33 @@ jobs:
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: echo "DIGITALOCEAN_TOKEN=${{ secrets.DIGITALOCEAN_TOKEN }}" >> $GITHUB_ENV
 
-      - name: Terraform Init (DO Cluster)
+      - name: Terraform Init (DO Cluster, auto-detect endpoint)
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: |
-          terraform init -input=false \
-            -backend-config="bucket=$(cat ./bootstrap-outputs/do-bucket.txt)" \
-            -backend-config="key=doks/terraform.tfstate" \
-            -backend-config="region=us-east-1" \
-            -backend-config="endpoints.s3=https://$(cat ./bootstrap-outputs/do-region.txt).digitaloceanspaces.com" \
-            -backend-config="skip_credentials_validation=true" \
-            -backend-config="skip_metadata_api_check=true" \
-            -backend-config="skip_region_validation=true"
+          PROVIDER_VERSION=$(terraform providers mirror . | grep "registry.terraform.io/hashicorp/aws" | awk '{print $2}' || echo "0.0.0")
+          echo "Detected AWS provider version: $PROVIDER_VERSION"
+
+          if [ "$(printf '%s\n' "4.33.0" "$PROVIDER_VERSION" | sort -V | head -n1)" = "4.33.0" ]; then
+            echo "Using endpoints.s3"
+            terraform init -input=false \
+              -backend-config="bucket=$(cat ./bootstrap-outputs/do-bucket.txt)" \
+              -backend-config="key=doks/terraform.tfstate" \
+              -backend-config="region=us-east-1" \
+              -backend-config="endpoints.s3=https://$(cat ./bootstrap-outputs/do-region.txt).digitaloceanspaces.com" \
+              -backend-config="skip_credentials_validation=true" \
+              -backend-config="skip_metadata_api_check=true" \
+              -backend-config="skip_region_validation=true"
+          else
+            echo "Using endpoint"
+            terraform init -input=false \
+              -backend-config="bucket=$(cat ./bootstrap-outputs/do-bucket.txt)" \
+              -backend-config="key=doks/terraform.tfstate" \
+              -backend-config="region=us-east-1" \
+              -backend-config="endpoint=https://$(cat ./bootstrap-outputs/do-region.txt).digitaloceanspaces.com" \
+              -backend-config="skip_credentials_validation=true" \
+              -backend-config="skip_metadata_api_check=true" \
+              -backend-config="skip_region_validation=true"
+          fi
 
       # -------------------------
       # Azure cluster

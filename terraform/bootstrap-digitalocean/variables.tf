@@ -1,25 +1,25 @@
 variable "digitalocean_token" {
-  description = "DigitalOcean personal access token"
   type        = string
+  description = "DigitalOcean API token"
 }
 
 variable "spaces_access_key" {
-  description = "Spaces access key"
   type        = string
+  description = "Spaces access key"
 }
 
 variable "spaces_secret_key" {
-  description = "Spaces secret key"
   type        = string
+  description = "Spaces secret key"
 }
 
 variable "region" {
-  description = "Region for Spaces bucket"
   type        = string
   default     = "nyc3"
+  description = "DO Spaces region"
 }
 
 variable "spaces_bucket_name" {
-  description = "Spaces bucket name"
   type        = string
+  description = "Spaces bucket name"
 }

@@ -11,14 +11,12 @@ terraform {
   }
 }
 
-# For normal DigitalOcean API usage (droplets, k8s, etc.)
 provider "digitalocean" {
   token = var.digitalocean_token
 }
 
-# For Spaces (S3-compatible)
 provider "aws" {
-  region                      = var.region
+  region                      = "us-east-1" # dummy, DO Spaces requires valid AWS region
   access_key                  = var.spaces_access_key
   secret_key                  = var.spaces_secret_key
   skip_credentials_validation = true

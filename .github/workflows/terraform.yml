@@ -58,8 +58,8 @@ jobs:
       - name: Save DO Bootstrap Outputs
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: |
-          terraform output -raw bucket_name > $GITHUB_WORKSPACE/do-bucket.txt
-          terraform output -raw region > $GITHUB_WORKSPACE/do-region.txt
+          terraform output -raw bucket_name > $GITHUB_WORKSPACE/do-bucket.txt || echo "MISSING" > $GITHUB_WORKSPACE/do-bucket.txt
+          terraform output -raw region > $GITHUB_WORKSPACE/do-region.txt || echo "MISSING" > $GITHUB_WORKSPACE/do-region.txt
 
       - name: Upload DO Bootstrap Outputs
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
@@ -93,9 +93,9 @@ jobs:
       - name: Save Azure Bootstrap Outputs
         if: ${{ github.event.inputs.cloud == 'azure' }}
         run: |
-          terraform output -raw resource_group_name > $GITHUB_WORKSPACE/azure-rg.txt
-          terraform output -raw storage_account_name > $GITHUB_WORKSPACE/azure-sa.txt
-          terraform output -raw container_name > $GITHUB_WORKSPACE/azure-container.txt
+          terraform output -raw resource_group_name > $GITHUB_WORKSPACE/azure-rg.txt || echo "MISSING" > $GITHUB_WORKSPACE/azure-rg.txt
+          terraform output -raw storage_account_name > $GITHUB_WORKSPACE/azure-sa.txt || echo "MISSING" > $GITHUB_WORKSPACE/azure-sa.txt
+          terraform output -raw container_name > $GITHUB_WORKSPACE/azure-container.txt || echo "MISSING" > $GITHUB_WORKSPACE/azure-container.txt
 
       - name: Upload Azure Bootstrap Outputs
         if: ${{ github.event.inputs.cloud == 'azure' }}
@@ -109,7 +109,7 @@ jobs:
           retention-days: 1
 
   terraform:
-    needs: bootstrap
+    needs: bootstrap   # <-- ensures bootstrap finishes first
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -123,6 +123,23 @@ jobs:
           terraform_version: 1.6.6
 
       # -------------------------
+      # Debug available artifacts
+      # -------------------------
+      - name: List available artifacts (debug)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+            });
+            console.log("Artifacts available in this run:");
+            for (const a of artifacts.data.artifacts) {
+              console.log(`- ${a.name} (expired: ${a.expired})`);
+            }
+
+      # -------------------------
       # DigitalOcean cluster
       # -------------------------
       - name: Download DO Bootstrap Outputs
@@ -134,7 +151,7 @@ jobs:
 
       - name: Debug DO Bootstrap Outputs
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
-        run: ls -R ./bootstrap-outputs
+        run: ls -R ./bootstrap-outputs || echo "No DO bootstrap outputs found"
 
       - name: DO ENV
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
@@ -143,36 +160,20 @@ jobs:
       - name: Terraform Init (DO Cluster, resilient find)
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: |
-          BUCKET=$(find ./bootstrap-outputs -type f -name "do-bucket.txt" -exec cat {} \;)
-          REGION=$(find ./bootstrap-outputs -type f -name "do-region.txt" -exec cat {} \;)
+          BUCKET=$(find ./bootstrap-outputs -type f -name "do-bucket.txt" -exec cat {} \; || echo "MISSING")
+          REGION=$(find ./bootstrap-outputs -type f -name "do-region.txt" -exec cat {} \; || echo "MISSING")
 
           echo "Bucket: $BUCKET"
           echo "Region: $REGION"
 
-          PROVIDER_VERSION=$(terraform providers mirror . | grep "registry.terraform.io/hashicorp/aws" | awk '{print $2}' || echo "0.0.0")
-          echo "Detected AWS provider version: $PROVIDER_VERSION"
-
-          if [ "$(printf '%s\n' "4.33.0" "$PROVIDER_VERSION" | sort -V | head -n1)" = "4.33.0" ]; then
-            echo "Using endpoints.s3"
-            terraform init -input=false \
-              -backend-config="bucket=$BUCKET" \
-              -backend-config="key=doks/terraform.tfstate" \
-              -backend-config="region=us-east-1" \
-              -backend-config="endpoints.s3=https://$REGION.digitaloceanspaces.com" \
-              -backend-config="skip_credentials_validation=true" \
-              -backend-config="skip_metadata_api_check=true" \
-              -backend-config="skip_region_validation=true"
-          else
-            echo "Using endpoint"
-            terraform init -input=false \
-              -backend-config="bucket=$BUCKET" \
-              -backend-config="key=doks/terraform.tfstate" \
-              -backend-config="region=us-east-1" \
-              -backend-config="endpoint=https://$REGION.digitaloceanspaces.com" \
-              -backend-config="skip_credentials_validation=true" \
-              -backend-config="skip_metadata_api_check=true" \
-              -backend-config="skip_region_validation=true"
-          fi
+          terraform init -input=false \
+            -backend-config="bucket=$BUCKET" \
+            -backend-config="key=doks/terraform.tfstate" \
+            -backend-config="region=us-east-1" \
+            -backend-config="endpoints.s3=https://$REGION.digitaloceanspaces.com" \
+            -backend-config="skip_credentials_validation=true" \
+            -backend-config="skip_metadata_api_check=true" \
+            -backend-config="skip_region_validation=true"
 
       # -------------------------
       # Azure cluster
@@ -186,7 +187,7 @@ jobs:
 
       - name: Debug Azure Bootstrap Outputs
         if: ${{ github.event.inputs.cloud == 'azure' }}
-        run: ls -R ./bootstrap-outputs
+        run: ls -R ./bootstrap-outputs || echo "No Azure bootstrap outputs found"
 
       - name: Azure ENV
         if: ${{ github.event.inputs.cloud == 'azure' }}
@@ -199,9 +200,9 @@ jobs:
       - name: Terraform Init (Azure Cluster, resilient find)
         if: ${{ github.event.inputs.cloud == 'azure' }}
         run: |
-          RG=$(find ./bootstrap-outputs -type f -name "azure-rg.txt" -exec cat {} \;)
-          SA=$(find ./bootstrap-outputs -type f -name "azure-sa.txt" -exec cat {} \;)
-          CONTAINER=$(find ./bootstrap-outputs -type f -name "azure-container.txt" -exec cat {} \;)
+          RG=$(find ./bootstrap-outputs -type f -name "azure-rg.txt" -exec cat {} \; || echo "MISSING")
+          SA=$(find ./bootstrap-outputs -type f -name "azure-sa.txt" -exec cat {} \; || echo "MISSING")
+          CONTAINER=$(find ./bootstrap-outputs -type f -name "azure-container.txt" -exec cat {} \; || echo "MISSING")
 
           echo "Resource Group: $RG"
           echo "Storage Account: $SA"

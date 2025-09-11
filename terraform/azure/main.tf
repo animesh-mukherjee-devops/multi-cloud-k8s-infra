@@ -1,6 +1,4 @@
 terraform {
-  required_version = ">= 1.6, < 2.0"
-
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
@@ -45,4 +43,11 @@ resource "local_file" "kubeconfig" {
   content         = azurerm_kubernetes_cluster.aks.kube_config_raw
   filename        = "${path.module}/kubeconfig"
   file_permission = "0600"
+}
+
+output "kubeconfig_path" {
+  value = local_file.kubeconfig.filename
+}
+output "cluster_name" {
+  value = azurerm_kubernetes_cluster.aks.name
 }

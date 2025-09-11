@@ -1,0 +1,67 @@
+name: Terraform Multi-Cloud
+
+on:
+  workflow_dispatch:
+    inputs:
+      cloud:
+        description: "Choose cloud provider"
+        required: true
+        default: "digitalocean"
+        type: choice
+        options:
+          - digitalocean
+          - azure
+      action:
+        description: "Terraform action"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./modules/${{ github.event.inputs.cloud }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      # --- Configure environment per cloud ---
+      - name: Set DigitalOcean Env
+        if: ${{ github.event.inputs.cloud == 'digitalocean' }}
+        run: echo "DIGITALOCEAN_TOKEN=${{ secrets.DIGITALOCEAN_TOKEN }}" >> $GITHUB_ENV
+
+      - name: Set Azure Env
+        if: ${{ github.event.inputs.cloud == 'azure' }}
+        run: |
+          echo "ARM_CLIENT_ID=${{ secrets.ARM_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=${{ secrets.ARM_CLIENT_SECRET }}" >> $GITHUB_ENV
+          echo "ARM_SUBSCRIPTION_ID=${{ secrets.ARM_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=${{ secrets.ARM_TENANT_ID }}" >> $GITHUB_ENV
+
+      # --- Terraform workflow ---
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Plan
+        if: ${{ github.event.inputs.action == 'plan' }}
+        run: terraform plan -input=false
+
+      - name: Terraform Apply
+        if: ${{ github.event.inputs.action == 'apply' }}
+        run: terraform apply -auto-approve -input=false
+
+      - name: Terraform Destroy
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: terraform destroy -auto-approve -input=false

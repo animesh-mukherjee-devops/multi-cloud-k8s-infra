@@ -1,24 +1,29 @@
 variable "resource_group_name" {
-  type    = string
-  default = "aks-rg"
+  description = "Resource group for AKS cluster"
+  type        = string
+  default     = "aks-rg"
 }
 
 variable "cluster_name" {
-  type    = string
-  default = "aks-cluster"
+  description = "Name of AKS cluster"
+  type        = string
+  default     = "aks-cluster"
 }
 
 variable "location" {
-  type    = string
-  default = "East US"
+  description = "Azure region"
+  type        = string
+  default     = "East US"
 }
 
 variable "node_count" {
-  type    = number
-  default = 2
+  description = "Number of worker nodes"
+  type        = number
+  default     = 2
 }
 
 variable "node_size" {
-  type    = string
-  default = "Standard_DS2_v2"
+  description = "VM size for AKS nodes"
+  type        = string
+  default     = "Standard_DS2_v2"
 }

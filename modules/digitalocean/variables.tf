@@ -1,23 +1,28 @@
 variable "digitalocean_token" {
-  type = string
+  description = "DigitalOcean API token"
+  type        = string
 }
 
 variable "region" {
-  type    = string
-  default = "nyc3"
+  description = "Region for Kubernetes cluster"
+  type        = string
+  default     = "nyc3"
 }
 
 variable "cluster_name" {
-  type    = string
-  default = "do-terraform-cluster"
+  description = "Kubernetes cluster name"
+  type        = string
+  default     = "do-terraform-cluster"
 }
 
 variable "node_size" {
-  type    = string
-  default = "s-2vcpu-4gb"
+  description = "Size of worker nodes"
+  type        = string
+  default     = "s-2vcpu-4gb"
 }
 
 variable "node_count" {
-  type    = number
-  default = 2
+  description = "Number of nodes"
+  type        = number
+  default     = 2
 }

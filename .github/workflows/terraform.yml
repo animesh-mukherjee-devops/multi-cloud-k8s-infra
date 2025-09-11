@@ -37,10 +37,26 @@ jobs:
         with:
           terraform_version: 1.6.6
 
-      - name: DigitalOcean ENV
+      # DigitalOcean bootstrap
+      - name: DO ENV
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: echo "DIGITALOCEAN_TOKEN=${{ secrets.DIGITALOCEAN_TOKEN }}" >> $GITHUB_ENV
 
+      - name: Terraform Init (DO Bootstrap)
+        if: ${{ github.event.inputs.cloud == 'digitalocean' }}
+        run: terraform init -input=false
+
+      - name: Terraform Apply (DO Bootstrap)
+        if: ${{ github.event.inputs.cloud == 'digitalocean' }}
+        run: terraform apply -auto-approve -input=false
+
+      - name: Save DO Bootstrap Outputs
+        if: ${{ github.event.inputs.cloud == 'digitalocean' }}
+        run: |
+          terraform output -raw bucket_name > ../../do-bucket.txt
+          terraform output -raw region > ../../do-region.txt
+
+      # Azure bootstrap
       - name: Azure ENV
         if: ${{ github.event.inputs.cloud == 'azure' }}
         run: |
@@ -49,11 +65,20 @@ jobs:
           echo "ARM_SUBSCRIPTION_ID=${{ secrets.ARM_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
           echo "ARM_TENANT_ID=${{ secrets.ARM_TENANT_ID }}" >> $GITHUB_ENV
 
-      - name: Terraform Init
+      - name: Terraform Init (Azure Bootstrap)
+        if: ${{ github.event.inputs.cloud == 'azure' }}
         run: terraform init -input=false
 
-      - name: Terraform Apply Bootstrap
+      - name: Terraform Apply (Azure Bootstrap)
+        if: ${{ github.event.inputs.cloud == 'azure' }}
         run: terraform apply -auto-approve -input=false
+
+      - name: Save Azure Bootstrap Outputs
+        if: ${{ github.event.inputs.cloud == 'azure' }}
+        run: |
+          terraform output -raw resource_group_name > ../../azure-rg.txt
+          terraform output -raw storage_account_name > ../../azure-sa.txt
+          terraform output -raw container_name > ../../azure-container.txt
 
   terraform:
     needs: bootstrap
@@ -71,10 +96,24 @@ jobs:
         with:
           terraform_version: 1.6.6
 
-      - name: DigitalOcean ENV
+      # DigitalOcean
+      - name: DO ENV
         if: ${{ github.event.inputs.cloud == 'digitalocean' }}
         run: echo "DIGITALOCEAN_TOKEN=${{ secrets.DIGITALOCEAN_TOKEN }}" >> $GITHUB_ENV
 
+      - name: Terraform Init (DO Cluster)
+        if: ${{ github.event.inputs.cloud == 'digitalocean' }}
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=$(cat ../do-bucket.txt)" \
+            -backend-config="key=doks/terraform.tfstate" \
+            -backend-config="region=$(cat ../do-region.txt)" \
+            -backend-config="endpoints.s3=https://$(cat ../do-region.txt).digitaloceanspaces.com" \
+            -backend-config="skip_credentials_validation=true" \
+            -backend-config="skip_metadata_api_check=true" \
+            -backend-config="skip_region_validation=true"
+
+      # Azure
       - name: Azure ENV
         if: ${{ github.event.inputs.cloud == 'azure' }}
         run: |
@@ -83,9 +122,16 @@ jobs:
           echo "ARM_SUBSCRIPTION_ID=${{ secrets.ARM_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
           echo "ARM_TENANT_ID=${{ secrets.ARM_TENANT_ID }}" >> $GITHUB_ENV
 
-      - name: Terraform Init
-        run: terraform init -input=false
+      - name: Terraform Init (Azure Cluster)
+        if: ${{ github.event.inputs.cloud == 'azure' }}
+        run: |
+          terraform init -input=false \
+            -backend-config="resource_group_name=$(cat ../azure-rg.txt)" \
+            -backend-config="storage_account_name=$(cat ../azure-sa.txt)" \
+            -backend-config="container_name=$(cat ../azure-container.txt)" \
+            -backend-config="key=aks/terraform.tfstate"
 
+      # Terraform Plan / Apply / Destroy
       - name: Terraform Plan
         if: ${{ github.event.inputs.action == 'plan' }}
         run: terraform plan -input=false
@@ -97,3 +143,13 @@ jobs:
       - name: Terraform Destroy
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: terraform destroy -auto-approve -input=false
+
+      # -------------------------
+      # Upload kubeconfig
+      # -------------------------
+      - name: Upload kubeconfig artifact
+        if: ${{ github.event.inputs.action == 'apply' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubeconfig-${{ github.event.inputs.cloud }}
+          path: ./terraform/${{ github.event.inputs.cloud }}/kubeconfig

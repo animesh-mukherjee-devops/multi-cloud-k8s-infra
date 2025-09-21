@@ -11,7 +11,6 @@ on:
 permissions:
   contents: read
   actions: write
-  id-token: write
 
 env:
   TF_VERSION: "1.6.9"
@@ -21,8 +20,6 @@ jobs:
   bootstrap:
     name: Bootstrap backend (create storage)
     runs-on: ubuntu-latest
-    outputs:
-      artifact-name: ${{ steps.set-artifact.outputs.name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,20 +29,8 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
-      - name: Choose provider
-        id: set-artifact
-        run: |
-          if [ "${{ github.event.inputs.provider }}" = "azure" ]; then
-            echo "name=azure-bootstrap-outputs" >> $GITHUB_OUTPUT
-            echo "provider=azure" >> $GITHUB_OUTPUT
-          else
-            echo "name=do-bootstrap-outputs" >> $GITHUB_OUTPUT
-            echo "provider=digitalocean" >> $GITHUB_OUTPUT
-          fi
-
-      # DigitalOcean bootstrap
       - name: Bootstrap: DigitalOcean - init & apply
-        if: ${{ steps.set-artifact.outputs.provider == 'digitalocean' }}
+        if: ${{ github.event.inputs.provider == 'digitalocean' }}
         env:
           TF_VAR_digitalocean_token: ${{ secrets.DIGITALOCEAN_TOKEN }}
           TF_VAR_spaces_access_key: ${{ secrets.DO_SPACES_KEY }}
@@ -53,19 +38,17 @@ jobs:
           TF_VAR_spaces_bucket_name: ${{ secrets.DO_SPACES_BUCKET_NAME }}
           TF_VAR_region: ${{ secrets.DO_REGION }}
         run: |
-          # fallback region to nyc3 if secret wasn't set
           : "${TF_VAR_region:=nyc3}"
           cd ${{ env.WORKDIR }}/bootstrap-digitalocean
           terraform init -input=false
           terraform apply -auto-approve -input=false
-          mkdir -p ./outputs
-          terraform output -raw bucket_name > ./outputs/do-bucket.txt || true
-          terraform output -raw region > ./outputs/do-region.txt || true
-          ls -la ./outputs
+          mkdir -p outputs
+          terraform output -raw bucket_name > outputs/do-bucket.txt || true
+          terraform output -raw region > outputs/do-region.txt || true
+          ls -la outputs
 
-      # Azure bootstrap
       - name: Bootstrap: Azure - init & apply
-        if: ${{ steps.set-artifact.outputs.provider == 'azure' }}
+        if: ${{ github.event.inputs.provider == 'azure' }}
         env:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
@@ -75,16 +58,16 @@ jobs:
           cd ${{ env.WORKDIR }}/bootstrap-azure
           terraform init -input=false
           terraform apply -auto-approve -input=false
-          mkdir -p ./outputs
-          terraform output -raw resource_group_name > ./outputs/rg-name.txt || true
-          terraform output -raw storage_account_name > ./outputs/storage-account.txt || true
-          terraform output -raw container_name > ./outputs/container-name.txt || true
-          ls -la ./outputs
+          mkdir -p outputs
+          terraform output -raw resource_group_name > outputs/rg-name.txt || true
+          terraform output -raw storage_account_name > outputs/storage-account.txt || true
+          terraform output -raw container_name > outputs/container-name.txt || true
+          ls -la outputs
 
       - name: Upload bootstrap outputs artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.set-artifact.outputs.name }}
+          name: bootstrap-outputs-${{ github.event.inputs.provider }}
           path: |
             terraform/bootstrap-digitalocean/outputs/**
             terraform/bootstrap-azure/outputs/**
@@ -105,12 +88,11 @@ jobs:
       - name: Download artifact (bootstrap outputs)
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.bootstrap.outputs.artifact-name }}
+          name: bootstrap-outputs-${{ github.event.inputs.provider }}
           path: ./bootstrap-outputs
 
-      # DigitalOcean cluster job
       - name: Cluster: DigitalOcean - init & apply
-        if: ${{ needs.bootstrap.outputs.artifact-name == 'do-bootstrap-outputs' }}
+        if: ${{ github.event.inputs.provider == 'digitalocean' }}
         env:
           TF_VAR_digitalocean_token: ${{ secrets.DIGITALOCEAN_TOKEN }}
           TF_VAR_spaces_access_key: ${{ secrets.DO_SPACES_KEY }}
@@ -129,14 +111,13 @@ jobs:
             -backend-config="skip_metadata_api_check=true" \
             -backend-config="skip_region_validation=true"
           terraform apply -auto-approve -input=false
-          mkdir -p ./outputs
-          terraform output -raw kubeconfig_path > ./outputs/kubeconfig-path.txt || true
-          terraform output -json kubeconfig  > ./outputs/kubeconfig.json || true
-          ls -la ./outputs
+          mkdir -p outputs
+          terraform output -raw kubeconfig_path > outputs/kubeconfig-path.txt || true
+          terraform output -json kubeconfig > outputs/kubeconfig.json || true
+          ls -la outputs
 
-      # Azure cluster job
       - name: Cluster: Azure - init & apply
-        if: ${{ needs.bootstrap.outputs.artifact-name == 'azure-bootstrap-outputs' }}
+        if: ${{ github.event.inputs.provider == 'azure' }}
         env:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
@@ -154,9 +135,15 @@ jobs:
             -backend-config="container_name=${CONTAINER}" \
             -backend-config="key=aks/terraform.tfstate"
           terraform apply -auto-approve -input=false
-          mkdir -p ./outputs
-          terraform output -raw kubeconfig_path > ./outputs/kubeconfig-path.txt || true
-          terraform output -json kubeconfig  > ./outputs/kubeconfig.json || true
-          ls -la ./outputs
+          mkdir -p outputs
+          terraform output -raw kubeconfig_path > outputs/kubeconfig-path.txt || true
+          terraform output -json kubeconfig > outputs/kubeconfig.json || true
+          ls -la outputs
 
-      - name: Upload k
+      - name: Upload kubeconfig artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubeconfig-${{ github.event.inputs.provider }}
+          path: |
+            terraform/digitalocean/outputs/**
+            terraform/azure/outputs/**

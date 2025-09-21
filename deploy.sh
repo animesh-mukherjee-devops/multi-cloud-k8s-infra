@@ -1,31 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+PROVIDER=${1:-digitalocean}
 
----
-
-### `deploy.sh`
-```bash
-#!/bin/bash
-set -e
-
-echo "Select cloud provider to deploy Kubernetes:"
-select provider in digitalocean azure; do
-  cd modules/$provider || exit 1
-
-  # Validate env vars
-  if [[ "$provider" == "digitalocean" ]]; then
-    if [[ -z "$DIGITALOCEAN_TOKEN" ]]; then
-      echo "Error: DIGITALOCEAN_TOKEN is not set"
-      exit 1
-    fi
-  fi
-
-  if [[ "$provider" == "azure" ]]; then
-    if [[ -z "$ARM_CLIENT_ID" || -z "$ARM_CLIENT_SECRET" || -z "$ARM_SUBSCRIPTION_ID" || -z "$ARM_TENANT_ID" ]]; then
-      echo "Error: Azure credentials not set"
-      exit 1
-    fi
-  fi
-
+if [[ "$PROVIDER" == "digitalocean" ]]; then
+  cd terraform/bootstrap-digitalocean
   terraform init
   terraform apply -auto-approve
-  break
-done
+  cd ../digitalocean
+  bucket=$(terraform -chdir=../bootstrap-digitalocean output -raw bucket_name)
+  region=$(terraform -chdir=../bootstrap-digitalocean output -raw region || echo nyc3)
+  terraform init -backend-config="bucket=${bucket}" \
+     -backend-config="key=doks/terraform.tfstate" \
+     -backend-config="region=us-east-1" \
+     -backend-config="endpoints.s3=https://${region}.digitaloceanspaces.com" \
+     -backend-config="skip_credentials_validation=true" \
+     -backend-config="skip_metadata_api_check=true" \
+     -backend-config="skip_region_validation=true"
+  terraform apply -auto-approve
+else
+  echo "Azure path not implemented in deploy.sh here; run terraform manually per README"
+fi

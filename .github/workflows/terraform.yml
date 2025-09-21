@@ -1,473 +1,173 @@
-# Enhanced GitHub Actions workflow for multi-cloud K8s infrastructure
-name: Multi-Cloud Terraform Infrastructure
+name: terraform
 
 on:
   workflow_dispatch:
     inputs:
-      cloud_provider:
-        description: 'Cloud provider to deploy'
+      provider:
+        description: 'cloud provider to deploy (digitalocean | azure)'
         required: true
-        default: 'digitalocean'
-        type: choice
-        options:
-        - digitalocean
-        - azure
-        - both
-      action:
-        description: 'Action to perform'
-        required: true
-        default: 'apply'
-        type: choice
-        options:
-        - plan
-        - apply
-        - destroy
-      environment:
-        description: 'Environment'
-        required: true
-        default: 'dev'
-        type: choice
-        options:
-        - dev
-        - staging
-        - prod
+        default: digitalocean
 
-  push:
-    branches: [ main ]
-    paths: 
-    - 'terraform/**'
-    - '.github/workflows/**'
-
-  pull_request:
-    branches: [ main ]
-    paths: 
-    - 'terraform/**'
+permissions:
+  contents: read
+  actions: write
+  id-token: write
 
 env:
-  TF_VERSION: '1.6.0'
-  TF_VAR_environment: ${{ github.event.inputs.environment || 'dev' }}
+  TF_VERSION: "1.6.9"        # adjust if you need a different version
+  WORKDIR: terraform
 
 jobs:
-  validate:
-    name: Validate Terraform
+  bootstrap:
+    name: Bootstrap backend (create storage)
     runs-on: ubuntu-latest
+    outputs:
+      artifact-name: ${{ steps.set-artifact.outputs.name }}
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: ${{ env.TF_VERSION }}
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: Choose provider
+        id: set-artifact
+        run: |
+          if [ "${{ github.event.inputs.provider }}" = "azure" ]; then
+            echo "name=azure-bootstrap-outputs" >> $GITHUB_OUTPUT
+            echo "provider=azure" >> $GITHUB_OUTPUT
+          else
+            echo "name=do-bootstrap-outputs" >> $GITHUB_OUTPUT
+            echo "provider=digitalocean" >> $GITHUB_OUTPUT
+          fi
 
-    - name: Terraform Format Check
-      run: |
-        terraform fmt -check -recursive terraform/
+      # DigitalOcean bootstrap
+      - name: Bootstrap: DigitalOcean - init & apply
+        if: steps.set-artifact.outputs.provider == 'digitalocean'
+        env:
+          TF_VAR_digitalocean_token: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          TF_VAR_spaces_access_key: ${{ secrets.DO_SPACES_KEY }}
+          TF_VAR_spaces_secret_key: ${{ secrets.DO_SPACES_SECRET }}
+          TF_VAR_spaces_bucket_name: ${{ secrets.DO_SPACES_BUCKET_NAME }}
+          TF_VAR_region: ${{
+            secrets.DO_REGION && secrets.DO_REGION != '' && secrets.DO_REGION || 'nyc3'
+          }}
+        run: |
+          cd ${{ env.WORKDIR }}/bootstrap-digitalocean
+          terraform init -input=false
+          terraform apply -auto-approve -input=false
+          mkdir -p ./outputs
+          # Read outputs and save to files
+          terraform output -raw bucket_name > ./outputs/do-bucket.txt || true
+          terraform output -raw region > ./outputs/do-region.txt || true
+          ls -la ./outputs
 
-    - name: Validate DigitalOcean
-      if: contains(github.event.inputs.cloud_provider, 'digitalocean') || github.event.inputs.cloud_provider == 'both' || github.event_name == 'push' || github.event_name == 'pull_request'
-      run: |
-        cd terraform/bootstrap-digitalocean
-        terraform init -backend=false
-        terraform validate
-        cd ../digitalocean
-        terraform init -backend=false
-        terraform validate
+      # Azure bootstrap
+      - name: Bootstrap: Azure - init & apply
+        if: steps.set-artifact.outputs.provider == 'azure'
+        env:
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+        run: |
+          cd ${{ env.WORKDIR }}/bootstrap-azure
+          terraform init -input=false
+          terraform apply -auto-approve -input=false
+          mkdir -p ./outputs
+          terraform output -raw resource_group_name > ./outputs/rg-name.txt || true
+          terraform output -raw storage_account_name > ./outputs/storage-account.txt || true
+          terraform output -raw container_name > ./outputs/container-name.txt || true
+          ls -la ./outputs
 
-    - name: Validate Azure
-      if: contains(github.event.inputs.cloud_provider, 'azure') || github.event.inputs.cloud_provider == 'both' || github.event_name == 'push' || github.event_name == 'pull_request'
-      run: |
-        cd terraform/bootstrap-azure
-        terraform init -backend=false
-        terraform validate
-        cd ../azure
-        terraform init -backend=false
-        terraform validate
+      - name: Upload bootstrap outputs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.set-artifact.outputs.name }}
+          path: |
+            terraform/bootstrap-digitalocean/outputs/**
+            terraform/bootstrap-azure/outputs/**
 
-  bootstrap-digitalocean:
-    name: Bootstrap DigitalOcean
-    needs: validate
+  cluster:
+    name: Create cluster
     runs-on: ubuntu-latest
-    if: contains(github.event.inputs.cloud_provider, 'digitalocean') || github.event.inputs.cloud_provider == 'both' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    environment: ${{ github.event.inputs.environment || 'dev' }}
-    
+    needs: bootstrap
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: ${{ env.TF_VERSION }}
-        terraform_wrapper: false
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
 
-    - name: Configure DigitalOcean
-      run: |
-        echo "region=nyc3" > terraform.auto.tfvars
-        echo "environment=${{ env.TF_VAR_environment }}" >> terraform.auto.tfvars
-      working-directory: terraform/bootstrap-digitalocean
+      - name: Download artifact (bootstrap outputs)
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.bootstrap.outputs.artifact-name }}
+          path: ./bootstrap-outputs
 
-    - name: Terraform Init
-      run: terraform init
-      working-directory: terraform/bootstrap-digitalocean
-      env:
-        DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
-        TF_VAR_spaces_access_key: ${{ secrets.DO_SPACES_KEY }}
-        TF_VAR_spaces_secret_key: ${{ secrets.DO_SPACES_SECRET }}
+      # DigitalOcean cluster job
+      - name: Cluster: DigitalOcean - init & apply
+        if: needs.bootstrap.outputs.artifact-name == 'do-bootstrap-outputs'
+        env:
+          TF_VAR_digitalocean_token: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          TF_VAR_spaces_access_key: ${{ secrets.DO_SPACES_KEY }}
+          TF_VAR_spaces_secret_key: ${{ secrets.DO_SPACES_SECRET }}
+          # Provide fallback region if not set by outputs
+        run: |
+          set -eux
+          BUCKET=$(cat ./bootstrap-outputs/do-bucket.txt)
+          DO_REGION=$(cat ./bootstrap-outputs/do-region.txt || echo "nyc3")
+          cd ${{ env.WORKDIR }}/digitalocean
+          # init backend using the bucket + DO endpoint
+          terraform init -input=false \
+            -backend-config="bucket=${BUCKET}" \
+            -backend-config="key=doks/terraform.tfstate" \
+            -backend-config="region=us-east-1" \
+            -backend-config="endpoints.s3=https://${DO_REGION}.digitaloceanspaces.com" \
+            -backend-config="skip_credentials_validation=true" \
+            -backend-config="skip_metadata_api_check=true" \
+            -backend-config="skip_region_validation=true"
+          terraform apply -auto-approve -input=false
+          # capture kubeconfig output (adjust var name/path as per your module)
+          mkdir -p ./outputs
+          terraform output -raw kubeconfig_path > ./outputs/kubeconfig-path.txt || true
+          # If kubeconfig content is output by terraform:
+          terraform output -json kubeconfig  > ./outputs/kubeconfig.json || true
+          ls -la ./outputs
 
-    - name: Terraform Plan
-      if: github.event.inputs.action == 'plan' || github.event_name == 'pull_request'
-      run: |
-        terraform plan -out=tfplan
-        terraform show -no-color tfplan > plan.txt
-      working-directory: terraform/bootstrap-digitalocean
-      env:
-        DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
-        TF_VAR_spaces_access_key: ${{ secrets.DO_SPACES_KEY }}
-        TF_VAR_spaces_secret_key: ${{ secrets.DO_SPACES_SECRET }}
+      # Azure cluster job
+      - name: Cluster: Azure - init & apply
+        if: needs.bootstrap.outputs.artifact-name == 'azure-bootstrap-outputs'
+        env:
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+        run: |
+          set -eux
+          RG=$(cat ./bootstrap-outputs/rg-name.txt)
+          STORAGE_ACCOUNT=$(cat ./bootstrap-outputs/storage-account.txt)
+          CONTAINER=$(cat ./bootstrap-outputs/container-name.txt)
+          cd ${{ env.WORKDIR }}/azure
+          terraform init -input=false \
+            -backend-config="resource_group_name=${RG}" \
+            -backend-config="storage_account_name=${STORAGE_ACCOUNT}" \
+            -backend-config="container_name=${CONTAINER}" \
+            -backend-config="key=aks/terraform.tfstate"
+          terraform apply -auto-approve -input=false
+          mkdir -p ./outputs
+          terraform output -raw kubeconfig_path > ./outputs/kubeconfig-path.txt || true
+          terraform output -json kubeconfig  > ./outputs/kubeconfig.json || true
+          ls -la ./outputs
 
-    - name: Comment PR with Plan
-      if: github.event_name == 'pull_request'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const fs = require('fs');
-          const planOutput = fs.readFileSync('terraform/bootstrap-digitalocean/plan.txt', 'utf8');
-          const truncatedPlan = planOutput.length > 65536 ? 
-            planOutput.substring(0, 65500) + '\n... (truncated)' : planOutput;
-          
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: `## DigitalOcean Bootstrap Plan\n\`\`\`terraform\n${truncatedPlan}\n\`\`\``
-          });
-
-    - name: Terraform Apply
-      if: github.event.inputs.action == 'apply' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-      run: terraform apply -auto-approve
-      working-directory: terraform/bootstrap-digitalocean
-      env:
-        DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
-        TF_VAR_spaces_access_key: ${{ secrets.DO_SPACES_KEY }}
-        TF_VAR_spaces_secret_key: ${{ secrets.DO_SPACES_SECRET }}
-
-    - name: Terraform Destroy
-      if: github.event.inputs.action == 'destroy'
-      run: terraform destroy -auto-approve
-      working-directory: terraform/bootstrap-digitalocean
-      env:
-        DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
-        TF_VAR_spaces_access_key: ${{ secrets.DO_SPACES_KEY }}
-        TF_VAR_spaces_secret_key: ${{ secrets.DO_SPACES_SECRET }}
-
-    - name: Save Bootstrap Outputs
-      if: github.event.inputs.action != 'destroy'
-      run: |
-        mkdir -p bootstrap-outputs
-        terraform output -raw bucket_name > bootstrap-outputs/do-bucket.txt
-        terraform output -raw region > bootstrap-outputs/do-region.txt
-        terraform output -raw bucket_domain > bootstrap-outputs/do-bucket-domain.txt
-        ls -la bootstrap-outputs/
-      working-directory: terraform/bootstrap-digitalocean
-
-    - name: Upload Bootstrap Artifacts
-      if: github.event.inputs.action != 'destroy'
-      uses: actions/upload-artifact@v4
-      with:
-        name: do-bootstrap-outputs-${{ env.TF_VAR_environment }}
-        path: terraform/bootstrap-digitalocean/bootstrap-outputs/
-        retention-days: 30
-
-  bootstrap-azure:
-    name: Bootstrap Azure
-    needs: validate
-    runs-on: ubuntu-latest
-    if: contains(github.event.inputs.cloud_provider, 'azure') || github.event.inputs.cloud_provider == 'both'
-    environment: ${{ github.event.inputs.environment || 'dev' }}
-    
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: ${{ env.TF_VERSION }}
-        terraform_wrapper: false
-
-    - name: Configure Azure
-      run: |
-        echo "location=East US" > terraform.auto.tfvars
-        echo "environment=${{ env.TF_VAR_environment }}" >> terraform.auto.tfvars
-      working-directory: terraform/bootstrap-azure
-
-    - name: Terraform Init
-      run: terraform init
-      working-directory: terraform/bootstrap-azure
-      env:
-        ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-        ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-        ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-        ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-
-    - name: Terraform Plan
-      if: github.event.inputs.action == 'plan' || github.event_name == 'pull_request'
-      run: |
-        terraform plan -out=tfplan
-        terraform show -no-color tfplan > plan.txt
-      working-directory: terraform/bootstrap-azure
-      env:
-        ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-        ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-        ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-        ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-
-    - name: Terraform Apply
-      if: github.event.inputs.action == 'apply' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-      run: terraform apply -auto-approve
-      working-directory: terraform/bootstrap-azure
-      env:
-        ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-        ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-        ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-        ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-
-    - name: Terraform Destroy
-      if: github.event.inputs.action == 'destroy'
-      run: terraform destroy -auto-approve
-      working-directory: terraform/bootstrap-azure
-      env:
-        ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-        ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-        ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-        ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-
-    - name: Save Bootstrap Outputs
-      if: github.event.inputs.action != 'destroy'
-      run: |
-        mkdir -p bootstrap-outputs
-        terraform output -raw resource_group_name > bootstrap-outputs/azure-rg.txt
-        terraform output -raw storage_account_name > bootstrap-outputs/azure-storage.txt
-        terraform output -raw container_name > bootstrap-outputs/azure-container.txt
-        ls -la bootstrap-outputs/
-      working-directory: terraform/bootstrap-azure
-
-    - name: Upload Bootstrap Artifacts
-      if: github.event.inputs.action != 'destroy'
-      uses: actions/upload-artifact@v4
-      with:
-        name: azure-bootstrap-outputs-${{ env.TF_VAR_environment }}
-        path: terraform/bootstrap-azure/bootstrap-outputs/
-        retention-days: 30
-
-  terraform-digitalocean:
-    name: Deploy DigitalOcean DOKS
-    needs: bootstrap-digitalocean
-    runs-on: ubuntu-latest
-    if: contains(github.event.inputs.cloud_provider, 'digitalocean') || github.event.inputs.cloud_provider == 'both' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    environment: ${{ github.event.inputs.environment || 'dev' }}
-    
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: ${{ env.TF_VERSION }}
-        terraform_wrapper: false
-
-    - name: Download Bootstrap Artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: do-bootstrap-outputs-${{ env.TF_VAR_environment }}
-        path: ./bootstrap-outputs
-
-    - name: Configure Cluster Variables
-      run: |
-        echo "cluster_name=doks-${{ env.TF_VAR_environment }}" > terraform.auto.tfvars
-        echo "node_size=s-2vcpu-2gb" >> terraform.auto.tfvars
-        echo "node_count=2" >> terraform.auto.tfvars
-        echo "region=$(cat ../bootstrap-outputs/do-region.txt)" >> terraform.auto.tfvars
-        echo "environment=${{ env.TF_VAR_environment }}" >> terraform.auto.tfvars
-        cat terraform.auto.tfvars
-      working-directory: terraform/digitalocean
-
-    - name: Terraform Init
-      run: |
-        terraform init \
-          -backend-config="bucket=$(cat ../bootstrap-outputs/do-bucket.txt)" \
-          -backend-config="key=doks/${{ env.TF_VAR_environment }}/terraform.tfstate" \
-          -backend-config="region=us-east-1" \
-          -backend-config="endpoints.s3=https://$(cat ../bootstrap-outputs/do-region.txt).digitaloceanspaces.com" \
-          -backend-config="skip_credentials_validation=true" \
-          -backend-config="skip_metadata_api_check=true" \
-          -backend-config="skip_region_validation=true"
-      working-directory: terraform/digitalocean
-      env:
-        DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
-        AWS_ACCESS_KEY_ID: ${{ secrets.DO_SPACES_KEY }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.DO_SPACES_SECRET }}
-
-    - name: Terraform Plan
-      if: github.event.inputs.action == 'plan' || github.event_name == 'pull_request'
-      run: |
-        terraform plan -out=tfplan
-        terraform show -no-color tfplan > plan.txt
-      working-directory: terraform/digitalocean
-      env:
-        DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
-
-    - name: Terraform Apply
-      if: github.event.inputs.action == 'apply' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-      run: terraform apply -auto-approve
-      working-directory: terraform/digitalocean
-      env:
-        DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
-
-    - name: Terraform Destroy
-      if: github.event.inputs.action == 'destroy'
-      run: terraform destroy -auto-approve
-      working-directory: terraform/digitalocean
-      env:
-        DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
-
-    - name: Save Kubeconfig
-      if: github.event.inputs.action != 'destroy'
-      run: |
-        terraform output -raw kubeconfig > kubeconfig
-        chmod 600 kubeconfig
-        # Test connection
-        export KUBECONFIG=$(pwd)/kubeconfig
-        kubectl cluster-info
-        kubectl get nodes
-      working-directory: terraform/digitalocean
-
-    - name: Upload Kubeconfig
-      if: github.event.inputs.action != 'destroy'
-      uses: actions/upload-artifact@v4
-      with:
-        name: kubeconfig-digitalocean-${{ env.TF_VAR_environment }}
-        path: terraform/digitalocean/kubeconfig
-        retention-days: 30
-
-  terraform-azure:
-    name: Deploy Azure AKS
-    needs: bootstrap-azure
-    runs-on: ubuntu-latest
-    if: contains(github.event.inputs.cloud_provider, 'azure') || github.event.inputs.cloud_provider == 'both'
-    environment: ${{ github.event.inputs.environment || 'dev' }}
-    
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: ${{ env.TF_VERSION }}
-        terraform_wrapper: false
-
-    - name: Download Bootstrap Artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: azure-bootstrap-outputs-${{ env.TF_VAR_environment }}
-        path: ./bootstrap-outputs
-
-    - name: Configure Cluster Variables
-      run: |
-        echo "cluster_name=aks-${{ env.TF_VAR_environment }}" > terraform.auto.tfvars
-        echo "node_count=2" >> terraform.auto.tfvars
-        echo "node_size=Standard_D2s_v3" >> terraform.auto.tfvars
-        echo "location=East US" >> terraform.auto.tfvars
-        echo "environment=${{ env.TF_VAR_environment }}" >> terraform.auto.tfvars
-        cat terraform.auto.tfvars
-      working-directory: terraform/azure
-
-    - name: Terraform Init
-      run: |
-        terraform init \
-          -backend-config="resource_group_name=$(cat ../bootstrap-outputs/azure-rg.txt)" \
-          -backend-config="storage_account_name=$(cat ../bootstrap-outputs/azure-storage.txt)" \
-          -backend-config="container_name=$(cat ../bootstrap-outputs/azure-container.txt)" \
-          -backend-config="key=aks/${{ env.TF_VAR_environment }}/terraform.tfstate"
-      working-directory: terraform/azure
-      env:
-        ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-        ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-        ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-        ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-
-    - name: Terraform Plan
-      if: github.event.inputs.action == 'plan' || github.event_name == 'pull_request'
-      run: |
-        terraform plan -out=tfplan
-        terraform show -no-color tfplan > plan.txt
-      working-directory: terraform/azure
-      env:
-        ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-        ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-        ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-        ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-
-    - name: Terraform Apply
-      if: github.event.inputs.action == 'apply' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-      run: terraform apply -auto-approve
-      working-directory: terraform/azure
-      env:
-        ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-        ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-        ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-        ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-
-    - name: Terraform Destroy
-      if: github.event.inputs.action == 'destroy'
-      run: terraform destroy -auto-approve
-      working-directory: terraform/azure
-      env:
-        ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-        ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-        ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-        ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-
-    - name: Save Kubeconfig
-      if: github.event.inputs.action != 'destroy'
-      run: |
-        terraform output -raw kubeconfig > kubeconfig
-        chmod 600 kubeconfig
-        # Test connection
-        export KUBECONFIG=$(pwd)/kubeconfig
-        kubectl cluster-info
-        kubectl get nodes
-      working-directory: terraform/azure
-
-    - name: Upload Kubeconfig
-      if: github.event.inputs.action != 'destroy'
-      uses: actions/upload-artifact@v4
-      with:
-        name: kubeconfig-azure-${{ env.TF_VAR_environment }}
-        path: terraform/azure/kubeconfig
-        retention-days: 30
-
-  notify:
-    name: Notify Results
-    needs: [terraform-digitalocean, terraform-azure]
-    runs-on: ubuntu-latest
-    if: always()
-    
-    steps:
-    - name: Notify Success
-      if: contains(needs.*.result, 'success')
-      run: |
-        echo "✅ Multi-cloud infrastructure deployment completed successfully!"
-        echo "Environment: ${{ env.TF_VAR_environment }}"
-        echo "Cloud Provider: ${{ github.event.inputs.cloud_provider }}"
-        echo "Action: ${{ github.event.inputs.action }}"
-
-    - name: Notify Failure
-      if: contains(needs.*.result, 'failure')
-      run: |
-        echo "❌ Multi-cloud infrastructure deployment failed!"
-        echo "Please check the workflow logs for details."
-        exit 1
+      - name: Upload kubeconfig artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubeconfig-${{ needs.bootstrap.outputs.artifact-name }}
+          path: |
+            terraform/digitalocean/outputs/**
+            terraform/azure/outputs/**

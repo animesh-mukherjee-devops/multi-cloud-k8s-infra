@@ -14,7 +14,7 @@ permissions:
   id-token: write
 
 env:
-  TF_VERSION: "1.6.9"        # adjust if you need a different version
+  TF_VERSION: "1.6.9"
   WORKDIR: terraform
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
-      
+
       - name: Choose provider
         id: set-artifact
         run: |
@@ -45,28 +45,27 @@ jobs:
 
       # DigitalOcean bootstrap
       - name: Bootstrap: DigitalOcean - init & apply
-        if: steps.set-artifact.outputs.provider == 'digitalocean'
+        if: ${{ steps.set-artifact.outputs.provider == 'digitalocean' }}
         env:
           TF_VAR_digitalocean_token: ${{ secrets.DIGITALOCEAN_TOKEN }}
           TF_VAR_spaces_access_key: ${{ secrets.DO_SPACES_KEY }}
           TF_VAR_spaces_secret_key: ${{ secrets.DO_SPACES_SECRET }}
           TF_VAR_spaces_bucket_name: ${{ secrets.DO_SPACES_BUCKET_NAME }}
-          TF_VAR_region: ${{
-            secrets.DO_REGION && secrets.DO_REGION != '' && secrets.DO_REGION || 'nyc3'
-          }}
+          TF_VAR_region: ${{ secrets.DO_REGION }}
         run: |
+          # fallback region to nyc3 if secret wasn't set
+          : "${TF_VAR_region:=nyc3}"
           cd ${{ env.WORKDIR }}/bootstrap-digitalocean
           terraform init -input=false
           terraform apply -auto-approve -input=false
           mkdir -p ./outputs
-          # Read outputs and save to files
           terraform output -raw bucket_name > ./outputs/do-bucket.txt || true
           terraform output -raw region > ./outputs/do-region.txt || true
           ls -la ./outputs
 
       # Azure bootstrap
       - name: Bootstrap: Azure - init & apply
-        if: steps.set-artifact.outputs.provider == 'azure'
+        if: ${{ steps.set-artifact.outputs.provider == 'azure' }}
         env:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
@@ -111,18 +110,16 @@ jobs:
 
       # DigitalOcean cluster job
       - name: Cluster: DigitalOcean - init & apply
-        if: needs.bootstrap.outputs.artifact-name == 'do-bootstrap-outputs'
+        if: ${{ needs.bootstrap.outputs.artifact-name == 'do-bootstrap-outputs' }}
         env:
           TF_VAR_digitalocean_token: ${{ secrets.DIGITALOCEAN_TOKEN }}
           TF_VAR_spaces_access_key: ${{ secrets.DO_SPACES_KEY }}
           TF_VAR_spaces_secret_key: ${{ secrets.DO_SPACES_SECRET }}
-          # Provide fallback region if not set by outputs
         run: |
           set -eux
           BUCKET=$(cat ./bootstrap-outputs/do-bucket.txt)
           DO_REGION=$(cat ./bootstrap-outputs/do-region.txt || echo "nyc3")
           cd ${{ env.WORKDIR }}/digitalocean
-          # init backend using the bucket + DO endpoint
           terraform init -input=false \
             -backend-config="bucket=${BUCKET}" \
             -backend-config="key=doks/terraform.tfstate" \
@@ -132,16 +129,14 @@ jobs:
             -backend-config="skip_metadata_api_check=true" \
             -backend-config="skip_region_validation=true"
           terraform apply -auto-approve -input=false
-          # capture kubeconfig output (adjust var name/path as per your module)
           mkdir -p ./outputs
           terraform output -raw kubeconfig_path > ./outputs/kubeconfig-path.txt || true
-          # If kubeconfig content is output by terraform:
           terraform output -json kubeconfig  > ./outputs/kubeconfig.json || true
           ls -la ./outputs
 
       # Azure cluster job
       - name: Cluster: Azure - init & apply
-        if: needs.bootstrap.outputs.artifact-name == 'azure-bootstrap-outputs'
+        if: ${{ needs.bootstrap.outputs.artifact-name == 'azure-bootstrap-outputs' }}
         env:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
@@ -164,10 +159,4 @@ jobs:
           terraform output -json kubeconfig  > ./outputs/kubeconfig.json || true
           ls -la ./outputs
 
-      - name: Upload kubeconfig artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: kubeconfig-${{ needs.bootstrap.outputs.artifact-name }}
-          path: |
-            terraform/digitalocean/outputs/**
-            terraform/azure/outputs/**
+      - name: Upload k
